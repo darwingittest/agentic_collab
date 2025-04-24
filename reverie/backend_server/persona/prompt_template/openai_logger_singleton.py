@@ -1,7 +1,5 @@
 import threading
-
 from openai_cost_logger import OpenAICostLogger, DEFAULT_LOG_PATH
-
 
 """ Metaclass for creating singletons."""
 class Singleton(type):
@@ -12,7 +10,7 @@ class Singleton(type):
         if not cls._instance:
             with cls._lock:
                 if not cls._instance:
-                    # We have not every built an instance before.  Build one now.
+                    # We have not yet built an instance before. Build one now.
                     instance = super().__call__(*args, **kwargs)
                     cls._instance = instance
                 else:
@@ -30,12 +28,19 @@ class OpenAICostLogger_Singleton(metaclass=Singleton):
             log_folder (str): the folder where the logs will be stored.
             cost_upperbound (float): the upperbound of the cost.
         """
-        self.__cost_logger = OpenAICostLogger(
-            experiment_name=experiment_name,
-            cost_upperbound=cost_upperbound,
-            log_folder=log_folder
-        ) 
-        self.lock = threading.Lock() # Lock to ensure thread safety when updating the cost logger.
+        try:
+            self.__cost_logger = OpenAICostLogger(
+                experiment_name=experiment_name,
+                cost_upperbound=cost_upperbound,
+                log_folder=log_folder
+            )
+        except OSError as e:
+            # On Windows, filenames with colons or other invalid chars will error out.
+            # Disable cost-logging instead of crashing.
+            print(f"[cost-logger] disabled due to filesystem error: {e}")
+            self.__cost_logger = None
+
+        self.lock = threading.Lock()  # Lock to ensure thread safety when updating the cost logger.
         
     
     def update_cost(self, response: dict, input_cost: float, output_cost: float = 0):
@@ -44,8 +49,10 @@ class OpenAICostLogger_Singleton(metaclass=Singleton):
         Args:
             response (dict): the response from the model.
             input_cost (float): the cost of the input per million tokens.
-            output_cost (float, optional): the cost of the output per million tokens.. Defaults to 0.
+            output_cost (float, optional): the cost of the output per million tokens. Defaults to 0.
         """
+        if not self.__cost_logger:
+            return  # cost-logger disabled
         with self.lock:
             self.__cost_logger.update_cost(
                 response=response,
